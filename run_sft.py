@@ -3,7 +3,6 @@
 import datetime
 import os
 import os.path
-import gc
 from itertools import chain
 
 import numpy as np
@@ -118,7 +117,8 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
     def group_texts(examples):
         # Concatenate all texts
         concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
-        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        first_key = next(iter(examples.keys()))
+        total_length = len(concatenated_examples[first_key])
         # Drop the small remainder
         total_length = (total_length // max_length) * max_length
         # Split by chunks of max_length
@@ -190,9 +190,9 @@ def load_pretrained_for_sft(pretrained_path, cfg, device):
         graph = graph_lib.get_graph(score_model.config, device)
         noise = noise_lib.get_noise(score_model.config).to(device)
         print(f"Loaded pretrained model from HuggingFace: {pretrained_path}")
-    except Exception:
-        # Try loading from local path
-        from omegaconf import OmegaConf
+    except (OSError, ValueError, EnvironmentError):
+        # Try loading from local path (OSError for missing files, ValueError for invalid model,
+        # EnvironmentError for HuggingFace hub connection issues)
         local_cfg = utils.load_hydra_config_from_run(pretrained_path)
         graph = graph_lib.get_graph(local_cfg, device)
         noise = noise_lib.get_noise(local_cfg).to(device)
