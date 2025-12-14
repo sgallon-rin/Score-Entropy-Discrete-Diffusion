@@ -1,0 +1,44 @@
+defaults:
+  - config
+  - _self_
+
+# SFT-specific configurations
+sft:
+  # Path to pretrained model (HuggingFace hub or local path)
+  pretrained_model: "louaaron/sedd-small"
+  # Whether to freeze certain layers during fine-tuning
+  freeze_embeddings: False
+  # Learning rate for SFT (typically lower than pretraining)
+  lr: 1e-5
+  # Dataset configuration for SFT
+  dataset: "simplescaling/s1K-1.1"
+  # Text field name in the dataset
+  text_field: "text"
+  # Maximum sequence length (uses model default if not specified)
+  max_length: null
+
+# Override training settings for SFT
+training:
+  batch_size: 64
+  accum: 1
+  n_iters: 50000
+  snapshot_freq: 5000
+  log_freq: 50
+  eval_freq: 500
+  snapshot_freq_for_preemption: 1000
+  snapshot_sampling: True
+  ema: 0.9999
+
+# Override optimizer settings for SFT (typically lower LR)
+optim:
+  lr: 1e-5
+  warmup: 500
+  grad_clip: 1.0
+
+# Override hydra output directory
+hydra:
+  run:
+    dir: exp_local/sft/${sft.dataset}/${now:%Y.%m.%d}/${now:%H%M%S}
+  sweep:
+    dir: exp/sft/${sft.dataset}/${now:%Y.%m.%d}/${now:%H%M%S}
+    subdir: ${hydra.job.num}
