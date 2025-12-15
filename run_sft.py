@@ -56,8 +56,19 @@ def cycle_loader(dataloader, sampler=None):
             yield data
 
 
-def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=None, num_proc=8):
-    """Load and prepare an SFT dataset."""
+def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=None, num_proc=8, question_field=None, response_field=None):
+    """Load and prepare an SFT dataset.
+    
+    Args:
+        dataset_name: HuggingFace dataset name
+        text_field: Field containing text (for single-field datasets)
+        tokenizer: Tokenizer to use
+        max_length: Maximum sequence length
+        cache_dir: Cache directory for datasets
+        num_proc: Number of processes for preprocessing
+        question_field: Field containing questions (for Q&A datasets)
+        response_field: Field containing responses/solutions (for Q&A datasets)
+    """
     # Load dataset from HuggingFace
     dataset = load_dataset(dataset_name, cache_dir=cache_dir)
     
@@ -81,16 +92,27 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
     EOS = tokenizer.encode(tokenizer.eos_token)[0]
     
     def preprocess_and_tokenize(example):
-        # Handle different text field names
-        if text_field in example:
+        # Handle different text field configurations
+        # Priority 1: Explicit question_field + response_field (for Q&A datasets like S1K-1.1)
+        if question_field is not None and response_field is not None:
+            if question_field in example and response_field in example:
+                text = [f"Question: {q}\n\nAnswer: {a}" for q, a in zip(example[question_field], example[response_field])]
+            else:
+                raise ValueError(f"Specified fields not found. question_field='{question_field}', response_field='{response_field}'. Available: {list(example.keys())}")
+        # Priority 2: Explicit text_field
+        elif text_field in example:
             text = example[text_field]
+        # Priority 3: Common field names
         elif "text" in example:
             text = example["text"]
         elif "content" in example:
             text = example["content"]
         elif "question" in example and "answer" in example:
-            # For Q&A datasets
-            text = [f"Question: {q}\nAnswer: {a}" for q, a in zip(example["question"], example["answer"])]
+            # For Q&A datasets with standard naming
+            text = [f"Question: {q}\n\nAnswer: {a}" for q, a in zip(example["question"], example["answer"])]
+        elif "question" in example and "solution" in example:
+            # For datasets like S1K-1.1 with question/solution format
+            text = [f"Question: {q}\n\nSolution: {s}" for q, s in zip(example["question"], example["solution"])]
         else:
             # Try to find any text-like field
             for key in example.keys():
@@ -147,12 +169,18 @@ def get_sft_dataloaders(cfg, distributed=True):
     tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
     max_length = cfg.sft.max_length if cfg.sft.max_length else cfg.model.length
     
+    # Get optional Q&A field configurations
+    question_field = cfg.sft.question_field if hasattr(cfg.sft, 'question_field') else None
+    response_field = cfg.sft.response_field if hasattr(cfg.sft, 'response_field') else None
+    
     train_set, valid_set = get_sft_dataset(
         cfg.sft.dataset, 
         cfg.sft.text_field, 
         tokenizer, 
         max_length,
-        cache_dir=cfg.data.cache_dir
+        cache_dir=cfg.data.cache_dir,
+        question_field=question_field,
+        response_field=response_field
     )
 
     if distributed:

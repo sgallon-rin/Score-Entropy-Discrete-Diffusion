@@ -56,21 +56,51 @@ The SFT script supports any HuggingFace dataset with text content. The script wi
 3. Chunk text into sequences of `max_length` tokens
 4. Create train/validation splits if not provided
 
-**Supported text field names:**
-- `text` (default)
-- `content`
-- `question` + `answer` (for Q&A datasets)
-- Custom field via `sft.text_field` config
+**Supported text field configurations:**
+- `sft.text_field`: Single text field (e.g., `text`, `content`)
+- `sft.question_field` + `sft.response_field`: Q&A format with explicit fields
+- Auto-detection: `question` + `answer`, or `question` + `solution`
 
-**Example: Using S1K-1.1 dataset**
+#### Using S1K-1.1 Dataset
+
+The [S1K-1.1 dataset](https://huggingface.co/datasets/simplescaling/s1K-1.1) contains math reasoning problems with multiple fields:
+
+| Field | Description | Recommended for SFT |
+|-------|-------------|---------------------|
+| `question` | The problem statement | ✅ Use as input |
+| `solution` | Ground truth solution | ✅ Use as target (recommended) |
+| `gemini_thinking_trajectory` | Gemini's reasoning trace | ⚠️ Alternative for reasoning-focused SFT |
+| `gemini_attempt` | Gemini's final response | ⚠️ Alternative target |
+| `deepseek_thinking_trajectory` | DeepSeek's reasoning trace | ⚠️ Alternative for reasoning-focused SFT |
+| `deepseek_attempt` | DeepSeek's final response | ⚠️ Alternative target |
+
+**Recommended configurations for S1K-1.1:**
 
 ```bash
+# Option 1: Use question + solution (recommended for standard SFT)
 python sft.py \
     sft.pretrained_model=louaaron/sedd-small \
     sft.dataset=simplescaling/s1K-1.1 \
-    sft.text_field=text \
-    training.n_iters=50000
+    sft.question_field=question \
+    sft.response_field=solution
+
+# Option 2: Use question + Gemini's reasoning trace (for chain-of-thought SFT)
+python sft.py \
+    sft.pretrained_model=louaaron/sedd-small \
+    sft.dataset=simplescaling/s1K-1.1 \
+    sft.question_field=question \
+    sft.response_field=gemini_thinking_trajectory
+
+# Option 3: Auto-detection (uses question + solution automatically)
+python sft.py \
+    sft.pretrained_model=louaaron/sedd-small \
+    sft.dataset=simplescaling/s1K-1.1
 ```
+
+**Choosing the right fields:**
+- **For standard answer generation**: Use `question` + `solution` - trains the model to produce correct answers
+- **For reasoning/chain-of-thought**: Use `question` + `gemini_thinking_trajectory` or `deepseek_thinking_trajectory` - trains the model to show its reasoning process
+- **For concise responses**: Use `question` + `gemini_attempt` or `deepseek_attempt` - trains on the model's final answers
 
 ### Running SFT Training
 
@@ -107,7 +137,9 @@ The SFT configuration (`configs/sft.yaml`) provides the following options:
 | `sft.pretrained_model` | `louaaron/sedd-small` | Path to pretrained model (HuggingFace or local) |
 | `sft.freeze_embeddings` | `False` | Whether to freeze embedding layers |
 | `sft.dataset` | `simplescaling/s1K-1.1` | HuggingFace dataset name |
-| `sft.text_field` | `text` | Name of the text field in dataset |
+| `sft.text_field` | `text` | Name of the text field (for single-field datasets) |
+| `sft.question_field` | `null` | Question field name (for Q&A datasets) |
+| `sft.response_field` | `null` | Response/solution field name (for Q&A datasets) |
 | `sft.max_length` | `null` | Max sequence length (uses model default if null) |
 | `optim.lr` | `1e-5` | Learning rate (lower than pretraining) |
 | `optim.warmup` | `500` | Warmup steps |
@@ -121,6 +153,8 @@ The SFT configuration (`configs/sft.yaml`) provides the following options:
 python sft.py \
     sft.pretrained_model=louaaron/sedd-medium \
     sft.dataset=simplescaling/s1K-1.1 \
+    sft.question_field=question \
+    sft.response_field=solution \
     sft.freeze_embeddings=True \
     optim.lr=5e-6 \
     training.batch_size=32 \

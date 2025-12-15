@@ -12,8 +12,12 @@ sft:
   lr: 1e-5
   # Dataset configuration for SFT
   dataset: "simplescaling/s1K-1.1"
-  # Text field name in the dataset
+  # Text field name in the dataset (for single-field datasets)
   text_field: "text"
+  # Question field name (for Q&A datasets like S1K-1.1)
+  question_field: null
+  # Response/solution field name (for Q&A datasets like S1K-1.1)
+  response_field: null
   # Maximum sequence length (uses model default if not specified)
   max_length: null
 
