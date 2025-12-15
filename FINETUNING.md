@@ -53,13 +53,21 @@ The SFT script supports any HuggingFace dataset with text content. The script wi
 
 1. Load the dataset from HuggingFace Hub
 2. Tokenize using GPT-2 tokenizer (same as pretraining)
-3. Chunk text into sequences of `max_length` tokens
-4. Create train/validation splits if not provided
+3. For Q&A datasets: separate prompts from targets and apply loss only to target tokens
+4. Pad sequences to `max_length` with proper attention masking
+5. Create train/validation splits if not provided
 
 **Supported text field configurations:**
 - `sft.text_field`: Single text field (e.g., `text`, `content`)
 - `sft.question_field` + `sft.response_field`: Q&A format with explicit fields
+- `sft.question_field` + `sft.thinking_field` + `sft.attempt_field`: For datasets with reasoning traces (like S1K)
 - Auto-detection: `question` + `answer`, or `question` + `solution`
+
+**Key Features:**
+- **Prompt Masking**: Loss is computed only on response tokens (prompt tokens are masked with -100)
+- **No Chunking**: Each example is kept intact to preserve question-answer alignment
+- **Proper Padding**: Sequences are padded to `max_length` with attention masks
+- **EOS Token**: Each sequence ends with an EOS token for proper generation
 
 #### Using S1K-1.1 Dataset
 
@@ -84,14 +92,24 @@ python sft.py \
     sft.question_field=question \
     sft.response_field=solution
 
-# Option 2: Use question + Gemini's reasoning trace (for chain-of-thought SFT)
+# Option 2: Use question + thinking_trajectory + attempt (for reasoning-focused SFT)
+# This concatenates thinking_trajectory and attempt as the target with labels
 python sft.py \
     sft.pretrained_model=louaaron/sedd-small \
     sft.dataset=simplescaling/s1K-1.1 \
     sft.question_field=question \
-    sft.response_field=gemini_thinking_trajectory
+    sft.thinking_field=gemini_thinking_trajectory \
+    sft.attempt_field=gemini_attempt
 
-# Option 3: Auto-detection (uses question + solution automatically)
+# Option 3: Use DeepSeek's reasoning traces
+python sft.py \
+    sft.pretrained_model=louaaron/sedd-small \
+    sft.dataset=simplescaling/s1K-1.1 \
+    sft.question_field=question \
+    sft.thinking_field=deepseek_thinking_trajectory \
+    sft.attempt_field=deepseek_attempt
+
+# Option 4: Auto-detection (uses question + solution automatically)
 python sft.py \
     sft.pretrained_model=louaaron/sedd-small \
     sft.dataset=simplescaling/s1K-1.1
@@ -99,8 +117,11 @@ python sft.py \
 
 **Choosing the right fields:**
 - **For standard answer generation**: Use `question` + `solution` - trains the model to produce correct answers
-- **For reasoning/chain-of-thought**: Use `question` + `gemini_thinking_trajectory` or `deepseek_thinking_trajectory` - trains the model to show its reasoning process
-- **For concise responses**: Use `question` + `gemini_attempt` or `deepseek_attempt` - trains on the model's final answers
+- **For reasoning/chain-of-thought**: Use `question` + `thinking_field` + `attempt_field` - trains the model to show its reasoning process followed by the answer
+  - The model will learn to generate: `Thinking: <reasoning_trace>\n\nAttempt: <final_answer>`
+  - Loss is computed only on the response (thinking + attempt), not on the question prompt
+- **For single-field reasoning**: Use `question` + `thinking_trajectory` field as response_field - trains on reasoning trace only
+- **For concise responses**: Use `question` + `attempt` field as response_field - trains on final answers only
 
 ### Running SFT Training
 
@@ -140,6 +161,8 @@ The SFT configuration (`configs/sft.yaml`) provides the following options:
 | `sft.text_field` | `text` | Name of the text field (for single-field datasets) |
 | `sft.question_field` | `null` | Question field name (for Q&A datasets) |
 | `sft.response_field` | `null` | Response/solution field name (for Q&A datasets) |
+| `sft.thinking_field` | `null` | Thinking trajectory field name (for S1K-like datasets with reasoning traces) |
+| `sft.attempt_field` | `null` | Attempt/answer field name (for S1K-like datasets, used with thinking_field) |
 | `sft.max_length` | `null` | Max sequence length (uses model default if null) |
 | `optim.lr` | `1e-5` | Learning rate (lower than pretraining) |
 | `optim.warmup` | `500` | Warmup steps |
