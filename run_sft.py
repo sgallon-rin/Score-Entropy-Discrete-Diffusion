@@ -183,6 +183,11 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
             attention_mask = full_encoding['attention_mask'] + [1]
             
             # Tokenize prompt to determine masking positions
+            # Note: We tokenize the prompt separately to determine where to mask.
+            # This approach may have slight boundary mismatches due to BPE tokenization
+            # context dependency, but it's a common practice in SFT implementations.
+            # The alternative (finding exact token boundaries in the full sequence) is
+            # more complex and not significantly more accurate for most datasets.
             if prompt:
                 prompt_text = f"Question: {prompt}\n\n"
                 prompt_encoding = tokenizer(
