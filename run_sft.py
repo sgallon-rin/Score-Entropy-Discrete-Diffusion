@@ -116,6 +116,8 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
             # Build prompt and target based on dataset configuration
             # Priority 1: S1K-style with thinking_field + attempt_field
             if thinking_field is not None and attempt_field is not None:
+                if question_field is None:
+                    raise ValueError(f"question_field must be specified when using thinking_field and attempt_field")
                 if question_field not in example:
                     raise ValueError(f"Question field '{question_field}' not found in dataset")
                 if thinking_field not in example:
@@ -210,12 +212,14 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
         }
     
     # Process datasets
+    # Note: Cache is disabled to ensure fresh preprocessing with new field parameters
+    # (thinking_field, attempt_field). In production, consider adding these to cache key.
     train_tokenized = train_data.map(
         preprocess_and_tokenize,
         batched=True,
         num_proc=num_proc,
         remove_columns=train_data.column_names,
-        load_from_cache_file=False,  # Disable cache since we changed the preprocessing
+        load_from_cache_file=False,
     )
     valid_tokenized = valid_data.map(
         preprocess_and_tokenize,
@@ -292,8 +296,7 @@ def get_sft_dataloaders(cfg, distributed=True):
             shuffle=(train_sampler is None),
             persistent_workers=True,
             collate_fn=collator,
-        ),
-        sampler=train_sampler
+        )
     )
     valid_loader = cycle_loader(
         DataLoader(
@@ -304,8 +307,7 @@ def get_sft_dataloaders(cfg, distributed=True):
             pin_memory=True,
             shuffle=(test_sampler is None),
             collate_fn=collator,
-        ),
-        sampler=test_sampler
+        )
     )
     return train_loader, valid_loader
 
