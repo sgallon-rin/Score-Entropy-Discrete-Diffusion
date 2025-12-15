@@ -91,12 +91,27 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
     
     EOS = tokenizer.encode(tokenizer.eos_token)[0]
     
+    def format_qa_text(questions, responses, response_label="Answer"):
+        """Format Q&A pairs into text with appropriate labels."""
+        return [f"Question: {q}\n\n{response_label}: {r}" for q, r in zip(questions, responses)]
+    
+    def get_response_label(field_name):
+        """Get appropriate label based on field name."""
+        if field_name and "solution" in field_name.lower():
+            return "Solution"
+        elif field_name and "trajectory" in field_name.lower():
+            return "Reasoning"
+        elif field_name and "attempt" in field_name.lower():
+            return "Response"
+        return "Answer"
+    
     def preprocess_and_tokenize(example):
         # Handle different text field configurations
         # Priority 1: Explicit question_field + response_field (for Q&A datasets like S1K-1.1)
         if question_field is not None and response_field is not None:
             if question_field in example and response_field in example:
-                text = [f"Question: {q}\n\nAnswer: {a}" for q, a in zip(example[question_field], example[response_field])]
+                label = get_response_label(response_field)
+                text = format_qa_text(example[question_field], example[response_field], label)
             else:
                 raise ValueError(f"Specified fields not found. question_field='{question_field}', response_field='{response_field}'. Available: {list(example.keys())}")
         # Priority 2: Explicit text_field
@@ -109,10 +124,10 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
             text = example["content"]
         elif "question" in example and "answer" in example:
             # For Q&A datasets with standard naming
-            text = [f"Question: {q}\n\nAnswer: {a}" for q, a in zip(example["question"], example["answer"])]
+            text = format_qa_text(example["question"], example["answer"], "Answer")
         elif "question" in example and "solution" in example:
             # For datasets like S1K-1.1 with question/solution format
-            text = [f"Question: {q}\n\nSolution: {s}" for q, s in zip(example["question"], example["solution"])]
+            text = format_qa_text(example["question"], example["solution"], "Solution")
         else:
             # Try to find any text-like field
             for key in example.keys():
@@ -169,9 +184,9 @@ def get_sft_dataloaders(cfg, distributed=True):
     tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
     max_length = cfg.sft.max_length if cfg.sft.max_length else cfg.model.length
     
-    # Get optional Q&A field configurations
-    question_field = cfg.sft.question_field if hasattr(cfg.sft, 'question_field') else None
-    response_field = cfg.sft.response_field if hasattr(cfg.sft, 'response_field') else None
+    # Get optional Q&A field configurations using getattr for robustness
+    question_field = getattr(cfg.sft, 'question_field', None)
+    response_field = getattr(cfg.sft, 'response_field', None)
     
     train_set, valid_set = get_sft_dataset(
         cfg.sft.dataset, 
