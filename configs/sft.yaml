@@ -2,6 +2,8 @@ defaults:
   - config
   - _self_
 
+ngpus: 1
+
 # SFT-specific configurations
 sft:
   # Path to pretrained model (HuggingFace hub or local path)
@@ -9,7 +11,7 @@ sft:
   # Whether to freeze certain layers during fine-tuning
   freeze_embeddings: False
   # Learning rate for SFT (typically lower than pretraining)
-  lr: 1e-5
+  #lr: 1e-5
   # Dataset configuration for SFT
   dataset: "simplescaling/s1K-1.1"
   # Text field name in the dataset (for single-field datasets)
@@ -27,7 +29,7 @@ sft:
 
 # Override training settings for SFT
 training:
-  batch_size: 64
+  batch_size: 16
   accum: 1
   n_iters: 50000
   snapshot_freq: 5000
@@ -39,7 +41,7 @@ training:
 
 # Override optimizer settings for SFT (typically lower LR)
 optim:
-  lr: 1e-5
+  lr: 3e-4
   warmup: 500
   grad_clip: 1.0
 
