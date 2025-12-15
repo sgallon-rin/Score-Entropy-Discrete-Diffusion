@@ -25,6 +25,10 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 torch.backends.cudnn.benchmark = True
 
+# Constants for SFT formatting
+THINKING_LABEL = "Thinking:"
+ATTEMPT_LABEL = "Attempt:"
+
 
 def setup(rank, world_size, port):
     os.environ["MASTER_ADDR"] = "localhost"
@@ -128,7 +132,7 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
                 prompt = example[question_field]
                 thinking = example[thinking_field]
                 attempt = example[attempt_field]
-                target = f"Thinking: {thinking}\n\nAttempt: {attempt}"
+                target = f"{THINKING_LABEL} {thinking}\n\n{ATTEMPT_LABEL} {attempt}"
             # Priority 2: Explicit question_field + response_field
             elif question_field is not None and response_field is not None:
                 if question_field not in example:
@@ -183,7 +187,8 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
                 prompt_text = f"Question: {prompt}\n\n"
                 prompt_encoding = tokenizer(
                     prompt_text,
-                    truncation=False,
+                    truncation=True,
+                    max_length=max_length - 1,  # Ensure prompt doesn't exceed limit
                     padding=False,
                     return_attention_mask=False,
                 )
@@ -193,6 +198,12 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
             
             # Create labels: -100 for prompt tokens, actual token IDs for target tokens
             labels = [-100] * prompt_length + input_ids[prompt_length:]
+            
+            # Ensure sequence length doesn't exceed max_length
+            if len(input_ids) > max_length:
+                input_ids = input_ids[:max_length]
+                labels = labels[:max_length]
+                attention_mask = attention_mask[:max_length]
             
             # Pad to max_length
             padding_length = max_length - len(input_ids)
@@ -241,6 +252,17 @@ class SFTDataCollator:
     def __call__(self, features):
         """Collate a batch of features."""
         # Features are already padded and contain input_ids, labels, attention_mask
+        # Verify all sequences have same length
+        if len(features) > 0:
+            expected_len = len(features[0]['input_ids'])
+            for i, f in enumerate(features):
+                assert len(f['input_ids']) == expected_len, \
+                    f"Feature {i} has inconsistent length: {len(f['input_ids'])} != {expected_len}"
+                assert len(f['labels']) == expected_len, \
+                    f"Feature {i} labels has inconsistent length: {len(f['labels'])} != {expected_len}"
+                assert len(f['attention_mask']) == expected_len, \
+                    f"Feature {i} attention_mask has inconsistent length: {len(f['attention_mask'])} != {expected_len}"
+        
         batch = {
             'input_ids': torch.stack([f['input_ids'] for f in features]),
             'labels': torch.stack([f['labels'] for f in features]),
