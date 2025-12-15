@@ -193,6 +193,8 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
                     return_attention_mask=False,
                 )
                 prompt_length = len(prompt_encoding['input_ids'])
+                # Ensure prompt_length doesn't exceed actual input length
+                prompt_length = min(prompt_length, len(input_ids))
             else:
                 prompt_length = 0
             
@@ -256,12 +258,18 @@ class SFTDataCollator:
         if len(features) > 0:
             expected_len = len(features[0]['input_ids'])
             for i, f in enumerate(features):
-                assert len(f['input_ids']) == expected_len, \
-                    f"Feature {i} has inconsistent length: {len(f['input_ids'])} != {expected_len}"
-                assert len(f['labels']) == expected_len, \
-                    f"Feature {i} labels has inconsistent length: {len(f['labels'])} != {expected_len}"
-                assert len(f['attention_mask']) == expected_len, \
-                    f"Feature {i} attention_mask has inconsistent length: {len(f['attention_mask'])} != {expected_len}"
+                if len(f['input_ids']) != expected_len:
+                    raise ValueError(
+                        f"Feature {i} has inconsistent input_ids length: {len(f['input_ids'])} != {expected_len}"
+                    )
+                if len(f['labels']) != expected_len:
+                    raise ValueError(
+                        f"Feature {i} has inconsistent labels length: {len(f['labels'])} != {expected_len}"
+                    )
+                if len(f['attention_mask']) != expected_len:
+                    raise ValueError(
+                        f"Feature {i} has inconsistent attention_mask length: {len(f['attention_mask'])} != {expected_len}"
+                    )
         
         batch = {
             'input_ids': torch.stack([f['input_ids'] for f in features]),
