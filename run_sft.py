@@ -56,7 +56,7 @@ def cycle_loader(dataloader, sampler=None):
             yield data
 
 
-def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=None, num_proc=8, question_field=None, response_field=None):
+def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=None, num_proc=8, question_field=None, response_field=None, thinking_field=None, attempt_field=None):
     """Load and prepare an SFT dataset.
     
     Args:
@@ -68,6 +68,8 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
         num_proc: Number of processes for preprocessing
         question_field: Field containing questions (for Q&A datasets)
         response_field: Field containing responses/solutions (for Q&A datasets)
+        thinking_field: Field containing thinking trajectory (for S1K-like datasets)
+        attempt_field: Field containing attempt/answer (for S1K-like datasets)
     """
     # Load dataset from HuggingFace
     dataset = load_dataset(dataset_name, cache_dir=cache_dir)
@@ -89,89 +91,158 @@ def get_sft_dataset(dataset_name, text_field, tokenizer, max_length, cache_dir=N
         train_data = splits["train"]
         valid_data = splits["test"]
     
-    EOS = tokenizer.encode(tokenizer.eos_token)[0]
+    EOS = tokenizer.eos_token_id
+    # Set pad token to EOS for GPT-2 tokenizer if not set
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
     
-    def format_qa_text(questions, responses, response_label="Answer"):
-        """Format Q&A pairs into text with appropriate labels."""
-        return [f"Question: {q}\n\n{response_label}: {r}" for q, r in zip(questions, responses)]
-    
-    def get_response_label(field_name):
-        """Get appropriate label based on field name."""
-        if field_name and "solution" in field_name.lower():
-            return "Solution"
-        elif field_name and "trajectory" in field_name.lower():
-            return "Reasoning"
-        elif field_name and "attempt" in field_name.lower():
-            return "Response"
-        return "Answer"
-    
-    def preprocess_and_tokenize(example):
-        # Handle different text field configurations
-        # Priority 1: Explicit question_field + response_field (for Q&A datasets like S1K-1.1)
-        if question_field is not None and response_field is not None:
-            if question_field in example and response_field in example:
-                label = get_response_label(response_field)
-                text = format_qa_text(example[question_field], example[response_field], label)
-            else:
-                raise ValueError(f"Specified fields not found. question_field='{question_field}', response_field='{response_field}'. Available: {list(example.keys())}")
-        # Priority 2: Explicit text_field
-        elif text_field in example:
-            text = example[text_field]
-        # Priority 3: Common field names
-        elif "text" in example:
-            text = example["text"]
-        elif "content" in example:
-            text = example["content"]
-        elif "question" in example and "answer" in example:
-            # For Q&A datasets with standard naming
-            text = format_qa_text(example["question"], example["answer"], "Answer")
-        elif "question" in example and "solution" in example:
-            # For datasets like S1K-1.1 with question/solution format
-            text = format_qa_text(example["question"], example["solution"], "Solution")
-        else:
-            # Try to find any text-like field
-            for key in example.keys():
-                if isinstance(example[key], list) and len(example[key]) > 0 and isinstance(example[key][0], str):
-                    text = example[key]
-                    break
-            else:
-                raise ValueError(f"Could not find text field in dataset. Available fields: {list(example.keys())}")
+    def preprocess_and_tokenize(examples):
+        """Preprocess examples for supervised fine-tuning with proper masking.
         
-        tokens = tokenizer(text, return_attention_mask=False, truncation=True, max_length=max_length-1)
-        # Add EOS token
-        for token in tokens['input_ids']:
-            token.append(EOS)
-        return tokens
-    
-    train_tokenized = train_data.map(preprocess_and_tokenize, batched=True, num_proc=num_proc, load_from_cache_file=True)
-    valid_tokenized = valid_data.map(preprocess_and_tokenize, batched=True, num_proc=num_proc, load_from_cache_file=True)
-    
-    # Remove original columns
-    cols_to_remove = [col for col in train_tokenized.column_names if col != "input_ids"]
-    train_tokenized = train_tokenized.remove_columns(cols_to_remove)
-    valid_tokenized = valid_tokenized.remove_columns([col for col in valid_tokenized.column_names if col != "input_ids"])
-    
-    def group_texts(examples):
-        # Concatenate all texts
-        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
-        first_key = next(iter(examples.keys()))
-        total_length = len(concatenated_examples[first_key])
-        # Drop the small remainder
-        total_length = (total_length // max_length) * max_length
-        # Split by chunks of max_length
-        result = {
-            k: [t[i : i + max_length] for i in range(0, total_length, max_length)]
-            for k, t in concatenated_examples.items()
+        For S1K dataset: prompt = question, target = thinking_trajectory + attempt
+        Loss is only computed on target tokens (prompt tokens are masked with -100).
+        """
+        input_ids_list = []
+        labels_list = []
+        attention_mask_list = []
+        
+        batch_size = len(examples[next(iter(examples.keys()))])
+        
+        for i in range(batch_size):
+            # Extract fields for this example
+            example = {k: v[i] for k, v in examples.items()}
+            
+            # Build prompt and target based on dataset configuration
+            # Priority 1: S1K-style with thinking_field + attempt_field
+            if thinking_field is not None and attempt_field is not None:
+                if question_field not in example:
+                    raise ValueError(f"Question field '{question_field}' not found in dataset")
+                if thinking_field not in example:
+                    raise ValueError(f"Thinking field '{thinking_field}' not found in dataset")
+                if attempt_field not in example:
+                    raise ValueError(f"Attempt field '{attempt_field}' not found in dataset")
+                
+                prompt = example[question_field]
+                thinking = example[thinking_field]
+                attempt = example[attempt_field]
+                target = f"Thinking: {thinking}\n\nAttempt: {attempt}"
+            # Priority 2: Explicit question_field + response_field
+            elif question_field is not None and response_field is not None:
+                if question_field not in example:
+                    raise ValueError(f"Question field '{question_field}' not found in dataset")
+                if response_field not in example:
+                    raise ValueError(f"Response field '{response_field}' not found in dataset")
+                
+                prompt = example[question_field]
+                target = example[response_field]
+            # Priority 3: Standard Q&A patterns
+            elif "question" in example and "answer" in example:
+                prompt = example["question"]
+                target = example["answer"]
+            elif "question" in example and "solution" in example:
+                prompt = example["question"]
+                target = example["solution"]
+            # Priority 4: Single text field
+            elif text_field in example:
+                # For single-field datasets, treat entire text as both prompt and target
+                # (this is the old behavior for compatibility)
+                full_text = example[text_field]
+                prompt = ""
+                target = full_text
+            elif "text" in example:
+                full_text = example["text"]
+                prompt = ""
+                target = full_text
+            else:
+                raise ValueError(f"Could not determine prompt/target fields. Available: {list(example.keys())}")
+            
+            # Build full text: prompt + target
+            if prompt:
+                full_text = f"Question: {prompt}\n\n{target}"
+            else:
+                full_text = target
+            
+            # Tokenize full text
+            full_encoding = tokenizer(
+                full_text,
+                truncation=True,
+                max_length=max_length - 1,  # Reserve space for EOS
+                padding=False,
+                return_attention_mask=True,
+            )
+            
+            # Add EOS token
+            input_ids = full_encoding['input_ids'] + [EOS]
+            attention_mask = full_encoding['attention_mask'] + [1]
+            
+            # Tokenize prompt to determine masking positions
+            if prompt:
+                prompt_text = f"Question: {prompt}\n\n"
+                prompt_encoding = tokenizer(
+                    prompt_text,
+                    truncation=False,
+                    padding=False,
+                    return_attention_mask=False,
+                )
+                prompt_length = len(prompt_encoding['input_ids'])
+            else:
+                prompt_length = 0
+            
+            # Create labels: -100 for prompt tokens, actual token IDs for target tokens
+            labels = [-100] * prompt_length + input_ids[prompt_length:]
+            
+            # Pad to max_length
+            padding_length = max_length - len(input_ids)
+            if padding_length > 0:
+                input_ids = input_ids + [tokenizer.pad_token_id] * padding_length
+                labels = labels + [-100] * padding_length
+                attention_mask = attention_mask + [0] * padding_length
+            
+            input_ids_list.append(input_ids)
+            labels_list.append(labels)
+            attention_mask_list.append(attention_mask)
+        
+        return {
+            'input_ids': input_ids_list,
+            'labels': labels_list,
+            'attention_mask': attention_mask_list,
         }
-        return result
     
-    train_chunked = train_tokenized.map(group_texts, batched=True, num_proc=num_proc, load_from_cache_file=True)
-    valid_chunked = valid_tokenized.map(group_texts, batched=True, num_proc=num_proc, load_from_cache_file=True)
+    # Process datasets
+    train_tokenized = train_data.map(
+        preprocess_and_tokenize,
+        batched=True,
+        num_proc=num_proc,
+        remove_columns=train_data.column_names,
+        load_from_cache_file=False,  # Disable cache since we changed the preprocessing
+    )
+    valid_tokenized = valid_data.map(
+        preprocess_and_tokenize,
+        batched=True,
+        num_proc=num_proc,
+        remove_columns=valid_data.column_names,
+        load_from_cache_file=False,
+    )
     
-    train_chunked = train_chunked.with_format('torch')
-    valid_chunked = valid_chunked.with_format('torch')
+    train_tokenized = train_tokenized.with_format('torch')
+    valid_tokenized = valid_tokenized.with_format('torch')
     
-    return train_chunked, valid_chunked
+    return train_tokenized, valid_tokenized
+
+
+class SFTDataCollator:
+    """Collator for SFT that batches input_ids, labels, and attention_mask."""
+    
+    def __call__(self, features):
+        """Collate a batch of features."""
+        # Features are already padded and contain input_ids, labels, attention_mask
+        batch = {
+            'input_ids': torch.stack([f['input_ids'] for f in features]),
+            'labels': torch.stack([f['labels'] for f in features]),
+            'attention_mask': torch.stack([f['attention_mask'] for f in features]),
+        }
+        return batch
 
 
 def get_sft_dataloaders(cfg, distributed=True):
@@ -187,6 +258,8 @@ def get_sft_dataloaders(cfg, distributed=True):
     # Get optional Q&A field configurations using getattr for robustness
     question_field = getattr(cfg.sft, 'question_field', None)
     response_field = getattr(cfg.sft, 'response_field', None)
+    thinking_field = getattr(cfg.sft, 'thinking_field', None)
+    attempt_field = getattr(cfg.sft, 'attempt_field', None)
     
     train_set, valid_set = get_sft_dataset(
         cfg.sft.dataset, 
@@ -195,7 +268,9 @@ def get_sft_dataloaders(cfg, distributed=True):
         max_length,
         cache_dir=cfg.data.cache_dir,
         question_field=question_field,
-        response_field=response_field
+        response_field=response_field,
+        thinking_field=thinking_field,
+        attempt_field=attempt_field,
     )
 
     if distributed:
@@ -205,6 +280,8 @@ def get_sft_dataloaders(cfg, distributed=True):
         train_sampler = None
         test_sampler = None
     
+    collator = SFTDataCollator()
+    
     train_loader = cycle_loader(DataLoader(
         train_set,
         batch_size=cfg.training.batch_size // (cfg.ngpus * cfg.training.accum),
@@ -213,7 +290,8 @@ def get_sft_dataloaders(cfg, distributed=True):
         pin_memory=True,
         shuffle=(train_sampler is None),
         persistent_workers=True,
-    ))
+        collate_fn=collator,
+    ), sampler=train_sampler)
     valid_loader = cycle_loader(DataLoader(
         valid_set,
         batch_size=cfg.eval.batch_size // (cfg.ngpus * cfg.training.accum),
@@ -221,7 +299,8 @@ def get_sft_dataloaders(cfg, distributed=True):
         num_workers=4,
         pin_memory=True,
         shuffle=(test_sampler is None),
-    ))
+        collate_fn=collator,
+    ), sampler=test_sampler)
     return train_loader, valid_loader
 
 
@@ -346,7 +425,8 @@ def _run(rank, world_size, cfg):
     while state['step'] < num_train_steps + 1:
         step = state['step']
 
-        batch = next(train_iter)['input_ids'].to(device)
+        batch_dict = next(train_iter)
+        batch = batch_dict['input_ids'].to(device)
         loss = train_step_fn(state, batch)
 
         # flag to see if there was movement ie a full batch got computed
@@ -361,7 +441,8 @@ def _run(rank, world_size, cfg):
                 utils.save_checkpoint(checkpoint_meta_dir, state)
 
             if step % cfg.training.eval_freq == 0:
-                eval_batch = next(eval_iter)['input_ids'].to(device)
+                eval_batch_dict = next(eval_iter)
+                eval_batch = eval_batch_dict['input_ids'].to(device)
                 eval_loss = eval_step_fn(state, eval_batch)
 
                 dist.all_reduce(eval_loss)
