@@ -95,6 +95,36 @@ python train.py noise_lib=loglinear graph.type=absorb model=medium training.accu
 python train.py noise_lib=geometric graph.type=uniform model=small model.scale_by_sigma=False
 ```
 
+## Fine-Tuning Pretrained Models
+
+### Supervised Fine-Tuning (SFT)
+
+We provide SFT code to fine-tune pretrained SEDD models on custom datasets. For a comprehensive guide, see [FINETUNING.md](FINETUNING.md).
+
+**Quick start:**
+```bash
+# Fine-tune SEDD-small on S1K-1.1 dataset
+python sft.py sft.pretrained_model=louaaron/sedd-small sft.dataset=simplescaling/s1K-1.1
+
+# Fine-tune SEDD-medium on a custom HuggingFace dataset
+python sft.py sft.pretrained_model=louaaron/sedd-medium sft.dataset=your-org/your-dataset
+```
+
+Key configuration options:
+```
+sft.pretrained_model      HuggingFace model path or local checkpoint path
+sft.dataset               HuggingFace dataset name
+sft.text_field            Name of text field in dataset (default: "text")
+sft.freeze_embeddings     Whether to freeze embedding layers (default: False)
+optim.lr                  Learning rate (default: 1e-5, lower than pretraining)
+```
+
+See [FINETUNING.md](FINETUNING.md) for:
+- Detailed configuration options
+- Recommended SFT datasets (reasoning, code, instruction following)
+- Potential RL methods for discrete diffusion LLMs
+- Example workflows and troubleshooting
+
 ## Other Features
 
 ### SLURM compatibility
@@ -102,6 +132,11 @@ python train.py noise_lib=geometric graph.type=uniform model=small model.scale_b
 To train on slurm, simply run 
 ```
 python train.py -m args
+```
+
+For SFT on SLURM:
+```
+python sft.py -m sft.pretrained_model=louaaron/sedd-small sft.dataset=your-dataset
 ```
 
 ## Citation
