@@ -282,25 +282,31 @@ def get_sft_dataloaders(cfg, distributed=True):
     
     collator = SFTDataCollator()
     
-    train_loader = cycle_loader(DataLoader(
-        train_set,
-        batch_size=cfg.training.batch_size // (cfg.ngpus * cfg.training.accum),
-        sampler=train_sampler,
-        num_workers=4,
-        pin_memory=True,
-        shuffle=(train_sampler is None),
-        persistent_workers=True,
-        collate_fn=collator,
-    ), sampler=train_sampler)
-    valid_loader = cycle_loader(DataLoader(
-        valid_set,
-        batch_size=cfg.eval.batch_size // (cfg.ngpus * cfg.training.accum),
-        sampler=test_sampler,
-        num_workers=4,
-        pin_memory=True,
-        shuffle=(test_sampler is None),
-        collate_fn=collator,
-    ), sampler=test_sampler)
+    train_loader = cycle_loader(
+        DataLoader(
+            train_set,
+            batch_size=cfg.training.batch_size // (cfg.ngpus * cfg.training.accum),
+            sampler=train_sampler,
+            num_workers=4,
+            pin_memory=True,
+            shuffle=(train_sampler is None),
+            persistent_workers=True,
+            collate_fn=collator,
+        ),
+        sampler=train_sampler
+    )
+    valid_loader = cycle_loader(
+        DataLoader(
+            valid_set,
+            batch_size=cfg.eval.batch_size // (cfg.ngpus * cfg.training.accum),
+            sampler=test_sampler,
+            num_workers=4,
+            pin_memory=True,
+            shuffle=(test_sampler is None),
+            collate_fn=collator,
+        ),
+        sampler=test_sampler
+    )
     return train_loader, valid_loader
 
 
