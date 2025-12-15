@@ -18,6 +18,10 @@ sft:
   question_field: null
   # Response/solution field name (for Q&A datasets like S1K-1.1)
   response_field: null
+  # Thinking trajectory field name (for S1K-1.1 dataset)
+  thinking_field: null
+  # Attempt/answer field name (for S1K-1.1 dataset)
+  attempt_field: null
   # Maximum sequence length (uses model default if not specified)
   max_length: null
 
